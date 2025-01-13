@@ -1,7 +1,8 @@
 #!/usr/bin/python3
 import os
 import json
-from datetime import datetime, timezone
+import datetime
+from datetime import datetime, timezone, timedelta
 from InquirerPy import inquirer
 from InquirerPy import prompt
 from InquirerPy.validator import EmptyInputValidator
@@ -9,10 +10,11 @@ from colorama import Fore, Style
 from jira import JIRA
 from rich.table import Table
 from rich.console import Console
+import pytz
 
 # Constant
 ACTION_DICT = {
-    "create_issue": "1. Create a new issue in the project",
+    "create_issue": "1. Create a new (sub-)issue in the project",
     "search_issue": "2. Search for an issue by key or filter",
     "list_issues": "3. List all the issues in the current project",
     "transition": "4. Transition an issue from one state to another",
@@ -51,6 +53,11 @@ def prompt_for_secrets():
             "type": "input",
             "name": "project_key",
             "message": "Enter the project key for the project you want to work on:",
+        },
+        {
+            "type": "input",
+            "name": "priorities",
+            "message": "Enter the priory types for the project (separated by comma):",
         },
         {"type": "input", "name": "api_token", "message": "Enter your API Token:"},
         {"type": "input", "name": "username", "message": "Enter your Username:"},
@@ -114,7 +121,7 @@ def prompt_for_secrets():
         validate=EmptyInputValidator("Assignee list cannot be empty"),
     ).execute()
 
-    configuration.update({"assignee": assignees})
+    configuration.update({"assignees": assignees})
 
     # Store the data
     store_secrets(configuration)
@@ -140,7 +147,9 @@ def check_for_existing_secrets():
 
 
 # Create a task
-def create_task(jira, project_key, summary, description, issue_type="Story", **fields):
+def create_task(
+    jira, project_key, summary, description, custom_fields, issue_type="Story", **fields
+):
     try:
         issue_data = {
             "project": {"key": project_key},
@@ -149,9 +158,9 @@ def create_task(jira, project_key, summary, description, issue_type="Story", **f
             "issuetype": {"name": issue_type},
         }
         issue_data.update(fields)
+        if custom_fields:
+            issue_data.update(custom_fields)
         task = jira.create_issue(fields=issue_data)
-        url = fields["server_url"] + "browse/"
-        print(f"Task created: {url}{task.key}")
         return task
     except Exception as e:
         print(f"Failed to create task: {e}")
@@ -170,7 +179,6 @@ def create_sub_task(jira, parent_issue_key, summary, description, **fields):
         }
         subtask_fields.update(fields)
         sub_task = jira.create_issue(fields=subtask_fields)
-        print(f"Sub-task created: {JIRA_PREFIX_URL}{sub_task.key}")
         return sub_task
     except Exception as e:
         print(f"Failed to create sub-task: {e}")
@@ -325,6 +333,26 @@ def add_comment_to_issue(jira_client, issue_key, comment):
 
 
 # Add worklog
+def get_date_plus_30_days_formatted(tz_str, date_format="%Y-%m-%d"):
+    """Gets the current time + 30 days in the specified timezone and format.
+
+    Args:
+        tz_str: A string representing the timezone (e.g., "America/New_York").
+        date_format: A string representing the desired date format (default: "%Y-%m-%d").
+
+    Returns:
+        A formatted date string, or None if the timezone is invalid.
+    """
+    try:
+        tz = pytz.timezone(tz_str)
+        now_tz = datetime.now(tz)
+        future_tz = now_tz + timedelta(days=30)
+        formatted_date = future_tz.strftime(date_format)
+        return formatted_date
+    except pytz.exceptions.UnknownTimeZoneError:
+        print(f"Invalid timezone: {tz_str}")
+        return None
+
 def convert_to_jira_date(user_date):
     try:
         # Parse and convert to JIRA format
@@ -388,10 +416,18 @@ def prompt_time_spent():
     ).execute()
 
 
+def prompt_estimated_time():
+    return inquirer.text(
+        message="> Enter the estimated time (e.g., 3h, 2d):",
+        validate=EmptyInputValidator("Estimated time cannot be empty"),
+    ).execute()
+
+
 def prompt_date():
     return inquirer.text(
         message="Started date (YYYY/MM/DD) (You can leave it empty):",
     ).execute()
+
 
 def prompt_summary():
     return inquirer.text(
@@ -407,128 +443,189 @@ def prompt_desc():
     ).execute()
 
 
-def prompt_priority():
+def prompt_priority(priorities):
     return inquirer.select(
         message="> Select the task priority:",
-        choices=["P2", "P1", "P0", "P3"],
+        choices=priorities.split(","),
+    ).execute()
+
+
+def prompt_story_points():
+    return inquirer.text(
+        message="> Enter the story points (numeric value):",
+        validate=lambda result: result.isdigit() or "Story points must be a number",
     ).execute()
 
 
 def prompt_labels(origin_labels, type_labels, project_labels):
     # Allow the user to select multiple labels
-    labels_origin = inquirer.checkbox(
-        message="Select ORIGIN labels for the task:",
-        choices=origin_labels,
-        instruction="(Use space to select, Enter to confirm)",
-    ).execute()
+    labels_origin = (
+        inquirer.checkbox(
+            message="Select ORIGIN labels for the task:",
+            choices=origin_labels,
+            instruction="(Use space to select, Enter to confirm)",
+        ).execute()
+        if origin_labels != [""]
+        else []
+    )
 
-    labels_type = inquirer.checkbox(
-        message="Select TYPE labels for the task:",
-        choices=type_labels,
-        instruction="(Use space to select, Enter to confirm)",
-    ).execute()
+    labels_type = (
+        inquirer.checkbox(
+            message="Select TYPE labels for the task:",
+            choices=type_labels,
+            instruction="(Use space to select, Enter to confirm)",
+        ).execute()
+        if type_labels != [""]
+        else []
+    )
 
-    labels_project = inquirer.checkbox(
-        message="Select PROJECT labels for the task:",
-        choices=project_labels,
-        instruction="(Use space to select, Enter to confirm)",
-    ).execute()
+    labels_project = (
+        inquirer.checkbox(
+            message="Select PROJECT labels for the task:",
+            choices=project_labels,
+            instruction="(Use space to select, Enter to confirm)",
+        ).execute()
+        if project_labels != [""]
+        else []
+    )
+
     return labels_origin + labels_type + labels_project
 
 
-def get_user_input(labels_conf):
+def prompt_assignee(assignees):
+    return inquirer.select(
+        message="> Select the assignee:",
+        choices=assignees.split(","),
+    ).execute()
+
+
+def prompt_watchers():
+    return inquirer.text(
+        message="> Enter the watchers (comma-separated emails):",
+    ).execute()
+
+def prompt_due_date():
+    due_date =inquirer.text(
+        message="> Enter the due date (YYYY-MM-DD) (Default: 30d):",
+    ).execute()
+    if due_date == "":
+        return get_date_plus_30_days_formatted("UTC")
+    else:
+        return due_date
+
+def prompt_parent():
+    return inquirer.text(
+        message="> Enter the parent issue key (ex. SPF-101):",
+    ).execute()
+
+def prompt_issue_type():
+    return inquirer.select(
+        message="> Select the issue type:",
+        choices=["Story", "Sub-task"],
+        default="Story",
+    ).execute()
+
+def get_account_id(account_id):
+    return {"accountId": account_id}
+
+def get_account_id_by_email(jira_client, email):
+    """Retrieves a user's account ID by their email address."""
+    try:
+      users = jira_client.search_users(query=email, maxResults=1)
+      if users:
+          return users[0].accountId
+      else:
+          print(f"User with email '{email}' not found.")
+          return None
+    except Exception as e:
+        print(f"Jira error: {e.text}")
+        return None
+
+def get_user_input(jira_type, labels_conf, default_watchers, assignees, priorities):
     # Get input for required fields
     summary = prompt_summary()
-    desc = prompt_desc()
-    priority = prompt_priority()
+    description = prompt_desc()
+
+    # Get the issue type
+    issue_type = prompt_issue_type()
+
+    # Get the priority
+    priority = prompt_priority(priorities)
+
+    # Get the parent task
+    parent_issue_key = prompt_parent()
 
     # Additional fields
-    labels = None
+    labels = []
     if labels_conf["is_enable"]:
         conf = labels_conf["labels"]
         labels = prompt_labels(
-            origin_labels=conf["origin"].split(','),
-            type_labels=conf["type"].split(','),
-            project_labels=conf["project"].split(','),
+            origin_labels=conf["origin"].split(","),
+            type_labels=conf["type"].split(","),
+            project_labels=conf["project"].split(","),
         )
 
     print(f"\nSelected labels: {labels if labels else 'None'}\n")
 
-    # Story points
-    story_points = inquirer.text(
-        message="> Enter the story points (numeric value):",
-        validate=lambda result: result.isdigit() or "Story points must be a number",
-    ).execute()
+    # Additional: Story points
+    story_points = prompt_story_points() if jira_type == "server" else 0
 
     # Estimated time
-    estimated_time = inquirer.text(
-        message="> Enter the estimated time (e.g., 3h, 2d):",
-        validate=EmptyInputValidator("Estimated time cannot be empty"),
-    ).execute()
+    estimated_time = prompt_estimated_time()
 
-    # Watchers: Pre-select default watchers and allow custom input
-    watchers = DEFAULT_WATCHERS.copy()
+    # Additional: Watchers: Pre-select default watchers and allow custom input
+    watchers_field = []
+    if jira_type == "server":
+        watchers = default_watchers.split(",")
+        additional_watchers = prompt_watchers()
 
-    additional_watchers = inquirer.text(
-        message="> Enter additional watchers (comma-separated emails):",
-    ).execute()
+        # Combine default and additional watchers
+        if additional_watchers.strip():
+            watchers.extend([w.strip() for w in additional_watchers.split(",")])
 
-    # Combine default and additional watchers
-    if additional_watchers.strip():
-        watchers.extend([w.strip() for w in additional_watchers.split(",")])
+        # Convert to correct format for Jira
+        watchers_field = [{"name": watcher} for watcher in watchers]
 
-    # Convert to correct format for Jira
-    watcher_field = [{"name": watcher} for watcher in watchers]
-
-    print(f"\nWatchers:: {watchers}\n")
+        print(f"\nWatchers:: {watchers}\n")
 
     # Assignee selection
-    assignee = inquirer.select(
-        message="> Assign this task to:", choices=ASSIGNEE_CHOICES
-    ).execute()
+    assignee = prompt_assignee(assignees)
+
+    # Due date
+    due_date = prompt_due_date()
 
     return {
         "summary": summary,
         "description": description,
+        "issue_type": issue_type,
+        "parent": {"key": parent_issue_key} if parent_issue_key else None,
         "priority": {"name": priority},
         "labels": labels,
         "story_points": int(story_points),
         "estimated_time": estimated_time,
-        "watchers": watcher_field,
-        "assignee": {"name": assignee},
+        "watchers": watchers_field,
+        "assignee": assignee,
+        "duedate": due_date,
     }
 
 
-def get_subtask_input():
+def get_subtask_input(assignees):
     # Get input for required fields
-    summary = inquirer.text(
-        message="> Enter the task summary:",
-        validate=EmptyInputValidator("Summary cannot be empty"),
-    ).execute()
-
-    description = inquirer.text(
-        message="> Enter the task description:",
-        validate=EmptyInputValidator("Description cannot be empty"),
-    ).execute()
+    summary = prompt_summary()
+    description = prompt_desc()
 
     # Estimated time
-    estimated_time = inquirer.text(
-        message="> Enter the estimated time (e.g., 3h, 2d):",
-        validate=EmptyInputValidator("Estimated time cannot be empty"),
-    ).execute()
+    estimated_time = prompt_estimated_time()
 
     # Assignee selection
-    assignee = inquirer.select(
-        message="> Assign this task to:", choices=ASSIGNEE_CHOICES
-    ).execute()
+    assignee = prompt_assignee(assignees)
 
     return {
         "summary": summary,
         "description": description,
         "estimated_time": estimated_time,
-        "assignee": {"name": assignee},
+        "assignee": assignee,
     }
-
 
 
 # Main entry point
@@ -542,8 +639,6 @@ if __name__ == "__main__":
     else:
         print("No secrets found. A new secret file has been created.")
         exit()
-
-    get_user_input(secrets["labels_conf"])
 
     # Use the secrets to access the JIRA API
     jira_client = connect_to_jira(
@@ -639,23 +734,72 @@ if __name__ == "__main__":
             log_work_with_date(jira_client, key, time_spent, comment, jira_date)
         elif get_action_description(action) == "create_issue":
             # Get user input for the task
-            task_details = get_user_input()
+            task_details = get_user_input(
+                secrets["jira_type"],
+                secrets["labels_conf"],
+                secrets["watchers"],
+                secrets["assignees"],
+                secrets["priorities"],
+            )
+
+            # Custom fields
+            custom_fields = None
+            if secrets["jira_type"] == "server":
+                custom_fields = {
+                    "customfield_10002": task_details["story_points"],
+                    "customfield_44300": task_details["watchers"],
+                }
 
             # Create the task
+            account_id = get_account_id(get_account_id_by_email(jira_client, task_details["assignee"]))
             task = create_task(
                 jira_client,
                 project_key=secrets["project_key"],
                 summary=task_details["summary"],
                 description=task_details["description"],
+                issue_type=task_details["issue_type"],
                 priority=task_details["priority"],
+                parent=task_details["parent"] if task_details["parent"] else None,
                 labels=task_details["labels"],
-                customfield_10002=task_details[
-                    "story_points"
-                ],  # Example custom field for story points
                 timetracking={"originalEstimate": task_details["estimated_time"]},
-                assignee=task_details["assignee"],
-                customfield_44300=task_details["watchers"],
-                server_url=secrets["server_url"],
+                assignee=account_id,
+                duedate=task_details["duedate"],
+                custom_fields=custom_fields,
             )
+            if task:
+                url = f"{secrets['server_url']}/browse/"
+                print(f"\nTask created successfully: {url}{task.key}\n")
+
+                transition_in_loop(jira_client, task.key)
+
+                create_subtask = inquirer.confirm(
+                    message="Do you want to create a subtask for this task?",
+                ).execute()
+                if create_sub_task:
+                    # Custom fields
+                    custom_fields = None
+                    if secrets["jira_type"] == "server":
+                        custom_fields = {
+                            "customfield_44300": task_details["watchers"],
+                        }
+                    subtask_details = get_subtask_input(secrets["assignees"])
+                    account_id = get_account_id(get_account_id_by_email(jira_client, subtask_details["assignee"]))
+                    subtask = create_task(
+                        jira_client,
+                        project_key=secrets["project_key"],
+                        summary=subtask_details["summary"],
+                        description=subtask_details["description"],
+                        issue_type="Sub-task",
+                        priority=task_details["priority"],
+                        parent={"key": task.key},
+                        labels=task_details["labels"],
+                        timetracking={"originalEstimate": task_details["estimated_time"]},
+                        assignee=account_id,
+                        duedate=task_details["duedate"],
+                        custom_fields=custom_fields,
+                    )
+                    if subtask:
+                        print(f"\nSubtask created successfully: {url}{subtask.key}\n")
+                        transition_in_loop(jira_client, subtask.key)
         else:
             exit()
