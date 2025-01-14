@@ -24,7 +24,8 @@ ACTION_DICT = {
     "get_comment": "6. Get comments on an issue",
     "log_work": "7. Log time spent on an issue",
     "get_time": "8. Get time tracking on an issue",
-    "exit": "9. Exit the application",
+    "update_labels": "9. Update labels",
+    "exit": "10. Exit the application",
 }
 
 
@@ -77,6 +78,7 @@ def prompt_for_secrets():
             "type": "confirm",
             "name": "ssl_cert",
             "message": "Will verify the SSL certification?",
+            "default": True,
         },
     ]
     answers = prompt(questions)
@@ -103,6 +105,11 @@ def prompt_for_secrets():
                 "type": "input",
                 "name": "project",
                 "message": "Project labels (separated by comma):",
+            },
+            {
+                "type": "input",
+                "name": "resolve",
+                "message": "Resolve labels (separated by comma):",
             },
         ]
 
@@ -310,10 +317,16 @@ def fetch_and_display_transitions(jira_client, issue_key):
 def display_table(console, issues):
     table = Table(title="Issue details")
     table.add_column("Key", style="cyan")
+    table.add_column("Type", style="blue")
     table.add_column("Status", style="magenta")
     table.add_column("Summary", style="green")
     for issue in issues:
-        table.add_row(issue.key, issue.fields.status.name, issue.fields.summary)
+        table.add_row(
+            issue.key,
+            issue.fields.issuetype.name,
+            issue.fields.status.name,
+            issue.fields.summary,
+        )
     console.print(table)
 
 
@@ -429,6 +442,43 @@ def log_work_with_date(
     except Exception as e:
         print(f"Failed to log work: {e}")
 
+def update_jira_labels(jira_client, issue_key, labels_to_add=None, ):
+    """Updates the labels of a Jira issue.
+
+    Args:
+        jira_client: A Jira client instance.
+        issue_key: The key of the Jira issue (e.g., "PROJECT-123").
+        labels_to_add: A list of labels to add.
+
+    Returns:
+        True if the labels were updated successfully, False otherwise.
+        Prints informative messages about the update process or any errors.
+    """
+    try:
+        issue = jira_client.issue(issue_key)
+        current_labels = issue.fields.labels or []  # Handle cases where there are no existing labels
+
+        updates = []
+
+        if labels_to_add:
+            for label in labels_to_add:
+                if label not in current_labels:
+                    updates.append(label)
+                    print(f"Adding label: {label}")
+                else:
+                    print(f"Label '{label}' already exists. Skipping.")
+        if updates:  # Only update if there are changes
+            updates += current_labels
+            print(f"New labels:{updates}")
+            issue.update(fields={"labels": updates})
+            return True
+        else:
+            print(f"No labels to add or remove for issue {issue_key}")
+            return True # Return true because there was no error.
+
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
+        return False
 
 # Helper
 def get_action_list():
@@ -541,14 +591,19 @@ def display_time_bar(time_info):
 
 
 def prompt_key(project_key):
+    if not hasattr(prompt_key, "memory"):
+        prompt_key.memory = ""
     user_prompt = inquirer.text(
         message="Enter the issue key (ex. SPF-101 or 101):",
         validate=EmptyInputValidator(),
+        default=prompt_key.memory,
     ).execute()
     if user_prompt.isdigit():
-        return project_key + "-" + user_prompt
+        key = project_key + "-" + user_prompt
     else:
-        return user_prompt
+        key = user_prompt
+    prompt_key.memory = key
+    return key
 
 
 def prompt_comment():
@@ -590,21 +645,20 @@ def prompt_desc():
     return inquirer.text(
         message="> Enter the task description:",
         validate=EmptyInputValidator("Description cannot be empty"),
+        multiline=True,
     ).execute()
 
 
 def prompt_priority(priorities):
     return inquirer.select(
         message="> Select the task priority:",
-        choices=priorities.split(","),
+        choices=priorities,
     ).execute()
 
 
 def prompt_story_points():
     return inquirer.text(
-        message="> Enter the story points (numeric value):",
-        validate=lambda result: result.isdigit(),
-        invalid_message="Story points must be a number",
+        message="> Enter the story points (decimal value):",
     ).execute()
 
 
@@ -666,10 +720,28 @@ def prompt_due_date():
         return due_date
 
 
-def prompt_parent():
-    return inquirer.text(
-        message="> Enter the parent issue key (ex. SPF-101):",
-    ).execute()
+def prompt_parent(console, project_key, list_parent):
+    use_list_parent = inquirer.confirm(
+        message="Do you want to fetch epic links?",
+        default=True,
+    ).execute() if list_parent else False
+
+    if use_list_parent:
+        display_table(console, list_parent)
+        user_prompt = inquirer.select(
+            message="Enter the parent issue key:",
+            choices=[issue.key for issue in list_parent],
+        ).execute()
+        return user_prompt
+    else:
+        user_prompt = inquirer.text(
+            message="Enter the parent issue key (ex. SPF-101 or 101):",
+        ).execute()
+        if user_prompt.isdigit():
+            return project_key + "-" + user_prompt
+        else:
+            return user_prompt
+
 
 
 def prompt_issue_type():
@@ -688,9 +760,25 @@ def prompt_number_of_comment():
         default="3",
     ).execute()
 
+def prompt_update_labels(labels):
+    if labels != [""]:
+        return inquirer.select(
+                message="Select labels to be updated:",
+                choices=labels,
+            ).execute()
+    else:
+        return inquirer.text(
+            message="Type your label here:",
+            validate=EmptyInputValidator()
+        ).execute()
 
-def get_account_id(account_id):
-    return {"accountId": account_id}
+def get_account(jira_client, jira_type, assignee):
+    account = (
+        {"name": assignee}
+        if jira_type == "server"
+        else get_account_id_by_email(jira_client, assignee)
+    )
+    return account
 
 
 def get_account_id_by_email(jira_client, email):
@@ -698,7 +786,7 @@ def get_account_id_by_email(jira_client, email):
     try:
         users = jira_client.search_users(query=email, maxResults=1)
         if users:
-            return users[0].accountId
+            return {"accountId": users[0].accountId}
         else:
             print(f"User with email '{email}' not found.")
             return None
@@ -707,7 +795,16 @@ def get_account_id_by_email(jira_client, email):
         return None
 
 
-def get_user_input(jira_type, labels_conf, default_watchers, assignees, priorities):
+def get_user_input(
+    jira_type,
+    labels_conf,
+    default_watchers,
+    assignees,
+    priorities,
+    project_key,
+    list_parent,
+    console,
+):
     # Get input for required fields
     summary = prompt_summary()
     description = prompt_desc()
@@ -716,25 +813,26 @@ def get_user_input(jira_type, labels_conf, default_watchers, assignees, prioriti
     issue_type = prompt_issue_type()
 
     # Get the priority
-    priority = prompt_priority(priorities)
+    priorities_list = [p.strip() for p in priorities.split(",")]
+    priority = prompt_priority(priorities_list)
 
     # Get the parent task
-    parent_issue_key = prompt_parent()
+    parent_issue_key = prompt_parent(console, project_key, list_parent)
 
     # Additional fields
     labels = []
     if labels_conf["is_enable"]:
         conf = labels_conf["labels"]
         labels = prompt_labels(
-            origin_labels=conf["origin"].split(","),
-            type_labels=conf["type"].split(","),
-            project_labels=conf["project"].split(","),
+            origin_labels=[l.strip() for l in conf["origin"].split(",")],
+            type_labels=[l.strip() for l in conf["type"].split(",")],
+            project_labels=[l.strip() for l in conf["project"].split(",")],
         )
 
     print(f"\nSelected labels: {labels if labels else 'None'}\n")
 
     # Additional: Story points
-    story_points = prompt_story_points() if jira_type == "server" else 0
+    story_points = prompt_story_points() if jira_type == "server" and issue_type != "Sub-task" else 0
 
     # Estimated time
     estimated_time = prompt_estimated_time()
@@ -742,7 +840,7 @@ def get_user_input(jira_type, labels_conf, default_watchers, assignees, prioriti
     # Additional: Watchers: Pre-select default watchers and allow custom input
     watchers_field = []
     if jira_type == "server":
-        watchers = default_watchers.split(",")
+        watchers = [w.strip() for w in default_watchers.split(",")]
         additional_watchers = prompt_watchers()
 
         # Combine default and additional watchers
@@ -785,7 +883,8 @@ def get_subtask_input(assignees):
     estimated_time = prompt_estimated_time()
 
     # Assignee selection
-    assignee = prompt_assignee(assignees)
+    assignee_list = [a.strip() for a in assignees.split(",")]
+    assignee = prompt_assignee(assignee_list)
 
     return {
         "summary": summary,
@@ -794,6 +893,13 @@ def get_subtask_input(assignees):
         "assignee": assignee,
     }
 
+
+def get_epic_list(jira_client, project_key, jira_type):
+    if jira_type == "server":
+        filter = "issuetype = Epic AND Resolution = Unresolved"
+        issues = search_for_issues(jira_client, project_key, filter)
+        epics = [issue for issue in issues if issue.fields.issuetype.name == "Epic"]
+        return epics
 
 # Main entry point
 if __name__ == "__main__":
@@ -808,6 +914,7 @@ if __name__ == "__main__":
         exit()
 
     project_key = secrets["project_key"]
+    url = f"{secrets['server_url']}browse/"
     # Use the secrets to access the JIRA API
     jira_client = connect_to_jira(
         server_url=secrets["server_url"],
@@ -821,6 +928,20 @@ if __name__ == "__main__":
     else:
         print("Failed to connect to Jira. Please check your secrets and try again.")
         exit()
+
+    # Get parent list here
+    # Todo: To be supported on Cloud Platform
+    use_list_parent = inquirer.confirm(
+        message="Would you like to use predefined parent issue?",
+        default=True,
+    ).execute()
+
+    list_parent = (
+        get_epic_list(jira_client, project_key, secrets["jira_type"])
+        if secrets["jira_type"] == "server" and use_list_parent
+        else None
+    )
+
     while True:
         # Prompt the user for the action they want to perform
         print("\n------------------------")
@@ -911,20 +1032,46 @@ if __name__ == "__main__":
                 secrets["watchers"],
                 secrets["assignees"],
                 secrets["priorities"],
+                project_key,
+                list_parent=list_parent,
+                console=console,
             )
 
             # Custom fields
             custom_fields = None
             if secrets["jira_type"] == "server":
                 custom_fields = {
-                    "customfield_10002": task_details["story_points"],
                     "customfield_44300": task_details["watchers"],
                 }
-
+                if task_details["parent"]:
+                    if task_details["issue_type"] != "Sub-task":
+                        custom_fields.update(
+                            {
+                                "customfield_10434": task_details["parent"]["key"],
+                            }
+                        )
+                    else:
+                        custom_fields.update(
+                            {
+                                "parent": {"key": task_details["parent"]["key"]},
+                            }
+                        )
+                if task_details["issue_type"] != "Sub-task":
+                    custom_fields.update(
+                        {
+                            "customfield_10002": task_details["story_points"],
+                        }
+                    )
+            else:
+                if task_details["parent"]:
+                    custom_fields = {
+                        "parent": task_details["parent"],
+                    }
             # Create the task
-            account_id = get_account_id(
-                get_account_id_by_email(jira_client, task_details["assignee"])
+            account = get_account(
+                jira_client, secrets["jira_type"], task_details["assignee"]
             )
+
             task = create_task(
                 jira_client,
                 project_key=secrets["project_key"],
@@ -932,15 +1079,13 @@ if __name__ == "__main__":
                 description=task_details["description"],
                 issue_type=task_details["issue_type"],
                 priority=task_details["priority"],
-                parent=task_details["parent"] if task_details["parent"] else None,
                 labels=task_details["labels"],
                 timetracking={"originalEstimate": task_details["estimated_time"]},
-                assignee=account_id,
+                assignee=account,
                 duedate=task_details["duedate"],
                 custom_fields=custom_fields,
             )
             if task:
-                url = f"{secrets['server_url']}/browse/"
                 print(f"\nTask created successfully: {url}{task.key}\n")
 
                 transition_in_loop(jira_client, task.key)
@@ -956,10 +1101,8 @@ if __name__ == "__main__":
                             "customfield_44300": task_details["watchers"],
                         }
                     subtask_details = get_subtask_input(secrets["assignees"])
-                    account_id = get_account_id(
-                        get_account_id_by_email(
-                            jira_client, subtask_details["assignee"]
-                        )
+                    account = get_account(
+                        jira_client, secrets["jira_type"], subtask_details["assignee"]
                     )
                     subtask = create_task(
                         jira_client,
@@ -973,7 +1116,7 @@ if __name__ == "__main__":
                         timetracking={
                             "originalEstimate": task_details["estimated_time"]
                         },
-                        assignee=account_id,
+                        assignee=account,
                         duedate=task_details["duedate"],
                         custom_fields=custom_fields,
                     )
@@ -984,5 +1127,15 @@ if __name__ == "__main__":
             issue_key = prompt_key(project_key)
             time_info = get_time_tracking_info(jira_client, issue_key)
             display_time_bar(time_info)
+        elif get_action_description(action) == "update_labels":
+            if secrets["labels_conf"]["is_enable"]:
+                temp = secrets["labels_conf"]["labels"]["resolve"].split(",")
+                conf = [c.strip() for c in temp]
+            else:
+                conf = [""]
+            label = prompt_update_labels(conf)
+            issue_key = prompt_key(project_key)
+            if update_jira_labels(jira_client, issue_key, [label]):
+                print(f"Labels updated successfully for issue {url}{issue_key}")
         else:
             exit()
