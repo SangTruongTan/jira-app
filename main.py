@@ -8,6 +8,7 @@ from InquirerPy import prompt
 from InquirerPy.validator import EmptyInputValidator
 from colorama import Fore, Style
 from jira import JIRA
+from jira import JIRAError
 from rich.table import Table
 from rich.console import Console
 import pytz
@@ -22,7 +23,8 @@ ACTION_DICT = {
     "comment": "5. Add a comment to an issue",
     "get_comment": "6. Get comments on an issue",
     "log_work": "7. Log time spent on an issue",
-    "exit": "8. Exit the application",
+    "get_time": "8. Get time tracking on an issue",
+    "exit": "9. Exit the application",
 }
 
 
@@ -243,6 +245,7 @@ def display_issue_status(jira_client, issue_key):
     except Exception as e:
         print(f"Failed to fetch status for issue {issue_key}: {e}")
 
+
 def display_recent_comments(console, jira_client):
     issue_key = prompt_key()
     num = int(prompt_number_of_comment())
@@ -251,6 +254,7 @@ def display_recent_comments(console, jira_client):
 
     if comments:
         display_comments_helper(console, issue_key, comments)
+
 
 def get_recent_comments(jira_client, issue_key, max_results=5):
     """Retrieves recent comments from a Jira issue.
@@ -270,10 +274,11 @@ def get_recent_comments(jira_client, issue_key, max_results=5):
         # Sort comments by creation date (newest first)
         comments.sort(key=lambda c: c.created, reverse=True)
 
-        return comments[:max_results] # Return the most recent comments
+        return comments[:max_results]  # Return the most recent comments
     except Exception as e:
         print(f"An unexpected error occurred: {e}")
         return None
+
 
 # Transition
 def get_transitions(jira_client, issue_key):
@@ -312,6 +317,7 @@ def display_table(console, issues):
     for issue in issues:
         table.add_row(issue.key, issue.fields.status.name, issue.fields.summary)
     console.print(table)
+
 
 def display_comments_helper(console, issue_key, comments):
     table = Table(title=f"Comments for {issue_key}")
@@ -397,6 +403,7 @@ def get_date_plus_30_days_formatted(tz_str, date_format="%Y-%m-%d"):
         print(f"Invalid timezone: {tz_str}")
         return None
 
+
 def convert_to_jira_date(user_date):
     try:
         # Parse and convert to JIRA format
@@ -436,6 +443,102 @@ def get_action_description(search_key, isReverse=True):
         return next(key for key, value in action_dict.items() if search_key == value)
     else:
         return action_dict[search_key]
+
+
+def get_time_tracking_info(jira_client, issue_key):
+    """Retrieves time tracking information from a Jira issue.
+
+    Args:
+        jira_client: A Jira client instance.
+        issue_key: The key of the Jira issue (e.g., "PROJECT-123").
+
+    Returns:
+        A dictionary containing originalEstimate, remainingEstimate, and timeSpent in seconds, or None if there's an error or no time tracking data.
+    """
+    try:
+        issue = jira_client.issue(issue_key)
+        timetracking = issue.fields.timetracking.__dict__
+
+        if timetracking:
+
+            remaining = (
+                timetracking["remainingEstimateSeconds"]
+                if "remainingEstimateSeconds" in timetracking
+                else 0
+            )
+
+            timeSpent = (
+                timetracking['timeSpentSeconds']
+                if 'timeSpentSeconds' in timetracking
+                else 0)
+
+            original = (
+                timetracking['originalEstimateSeconds']
+                if 'originalEstimateSeconds' in timetracking
+                else remaining + timeSpent
+            )
+            return {
+                "remainingEstimate": remaining,
+                "timeSpent": timeSpent,
+                "originalEstimate": original,
+            }
+        else:
+            print(f"No time tracking information found for {issue_key}")
+            return None
+    except JIRAError as e:
+        print(f"Jira error: {e.text}")
+        return None
+    except AttributeError:
+        print(
+            f"AttributeError: Time tracking might not be enabled for this issue or project."
+        )
+        return None
+
+
+def format_seconds(seconds):
+    """Formats seconds into a human-readable string (e.g., "1h 30m")."""
+    if seconds is None:
+        return "0s"
+    minutes, seconds = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    days, hours = divmod(hours, 24)
+
+    parts = []
+    if days:
+        parts.append(f"{days}d")
+    if hours:
+        parts.append(f"{hours}h")
+    if minutes:
+        parts.append(f"{minutes}m")
+    if not parts:
+        parts.append("0m")
+    return " ".join(parts)
+
+
+def display_time_bar(time_info):
+    """Displays the time tracking information as a text-based bar."""
+    if not time_info:
+        return
+
+    total = time_info["originalEstimate"]
+    spent = time_info["timeSpent"]
+    remaining = time_info["remainingEstimate"]
+
+    if total == 0:
+        print("No original estimate set.")
+        return
+
+    spent_percent = int((spent / total) * 20)  # Adjust bar length (20 characters here)
+    remaining_percent = int((remaining / total) * 20)
+
+    spent_bar = "[" + "=" * spent_percent + " " * (20 - spent_percent) + "]"
+    remaining_bar = "[" + " " * remaining_percent + "-" * (20 - remaining_percent) + "]"
+
+    print(f"Time Spent: {format_seconds(spent)} {spent_bar} {int(spent/total*100)}%")
+    print(
+        f"Remaining:  {format_seconds(remaining)} {remaining_bar} {int(remaining/total*100)}%"
+    )
+    print(f"Total:      {format_seconds(total)}")
 
 
 def prompt_key():
@@ -549,8 +652,9 @@ def prompt_watchers():
         message="> Enter the watchers (comma-separated emails):",
     ).execute()
 
+
 def prompt_due_date():
-    due_date =inquirer.text(
+    due_date = inquirer.text(
         message="> Enter the due date (YYYY-MM-DD) (Default: 30d):",
     ).execute()
     if due_date == "":
@@ -558,10 +662,12 @@ def prompt_due_date():
     else:
         return due_date
 
+
 def prompt_parent():
     return inquirer.text(
         message="> Enter the parent issue key (ex. SPF-101):",
     ).execute()
+
 
 def prompt_issue_type():
     return inquirer.select(
@@ -569,6 +675,7 @@ def prompt_issue_type():
         choices=["Story", "Sub-task"],
         default="Story",
     ).execute()
+
 
 def prompt_number_of_comment():
     return inquirer.text(
@@ -578,21 +685,24 @@ def prompt_number_of_comment():
         default="3",
     ).execute()
 
+
 def get_account_id(account_id):
     return {"accountId": account_id}
+
 
 def get_account_id_by_email(jira_client, email):
     """Retrieves a user's account ID by their email address."""
     try:
-      users = jira_client.search_users(query=email, maxResults=1)
-      if users:
-          return users[0].accountId
-      else:
-          print(f"User with email '{email}' not found.")
-          return None
+        users = jira_client.search_users(query=email, maxResults=1)
+        if users:
+            return users[0].accountId
+        else:
+            print(f"User with email '{email}' not found.")
+            return None
     except Exception as e:
         print(f"Jira error: {e.text}")
         return None
+
 
 def get_user_input(jira_type, labels_conf, default_watchers, assignees, priorities):
     # Get input for required fields
@@ -806,7 +916,9 @@ if __name__ == "__main__":
                 }
 
             # Create the task
-            account_id = get_account_id(get_account_id_by_email(jira_client, task_details["assignee"]))
+            account_id = get_account_id(
+                get_account_id_by_email(jira_client, task_details["assignee"])
+            )
             task = create_task(
                 jira_client,
                 project_key=secrets["project_key"],
@@ -830,7 +942,7 @@ if __name__ == "__main__":
                 create_subtask = inquirer.confirm(
                     message="Do you want to create a subtask for this task?",
                 ).execute()
-                if create_sub_task:
+                if create_subtask:
                     # Custom fields
                     custom_fields = None
                     if secrets["jira_type"] == "server":
@@ -838,7 +950,11 @@ if __name__ == "__main__":
                             "customfield_44300": task_details["watchers"],
                         }
                     subtask_details = get_subtask_input(secrets["assignees"])
-                    account_id = get_account_id(get_account_id_by_email(jira_client, subtask_details["assignee"]))
+                    account_id = get_account_id(
+                        get_account_id_by_email(
+                            jira_client, subtask_details["assignee"]
+                        )
+                    )
                     subtask = create_task(
                         jira_client,
                         project_key=secrets["project_key"],
@@ -848,7 +964,9 @@ if __name__ == "__main__":
                         priority=task_details["priority"],
                         parent={"key": task.key},
                         labels=task_details["labels"],
-                        timetracking={"originalEstimate": task_details["estimated_time"]},
+                        timetracking={
+                            "originalEstimate": task_details["estimated_time"]
+                        },
                         assignee=account_id,
                         duedate=task_details["duedate"],
                         custom_fields=custom_fields,
@@ -856,5 +974,9 @@ if __name__ == "__main__":
                     if subtask:
                         print(f"\nSubtask created successfully: {url}{subtask.key}\n")
                         transition_in_loop(jira_client, subtask.key)
+        elif get_action_description(action) == "get_time":
+            issue_key = prompt_key()
+            time_info = get_time_tracking_info(jira_client, issue_key)
+            display_time_bar(time_info)
         else:
             exit()
