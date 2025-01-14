@@ -572,9 +572,10 @@ def prompt_issue_type():
 
 def prompt_number_of_comment():
     return inquirer.text(
-        message="> Enter number of comments to be revealed:",
+        message="> Enter number of comments to be revealed (default: 3):",
         validate=lambda result: (result.strip().isdigit() and int(result) > 0),
         invalid_message="Must be a positive number",
+        default="3",
     ).execute()
 
 def get_account_id(account_id):
