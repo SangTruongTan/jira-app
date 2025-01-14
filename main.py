@@ -11,6 +11,7 @@ from jira import JIRA
 from rich.table import Table
 from rich.console import Console
 import pytz
+import urllib3
 
 # Constant
 ACTION_DICT = {
@@ -19,13 +20,16 @@ ACTION_DICT = {
     "list_issues": "3. List all the issues in the current project",
     "transition": "4. Transition an issue from one state to another",
     "comment": "5. Add a comment to an issue",
-    "log_work": "6. Log time spent on an issue",
-    "exit": "7. Exit the application",
+    "get_comment": "6. Get comments on an issue",
+    "log_work": "7. Log time spent on an issue",
+    "exit": "8. Exit the application",
 }
 
 
 # Connect to Jira
 def connect_to_jira(server_url, username, api_token, jira_type, ssl_cert=True):
+    if ssl_cert == False:
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
     try:
         if jira_type == "cloud":
             jira = JIRA(
@@ -239,6 +243,37 @@ def display_issue_status(jira_client, issue_key):
     except Exception as e:
         print(f"Failed to fetch status for issue {issue_key}: {e}")
 
+def display_recent_comments(console, jira_client):
+    issue_key = prompt_key()
+    num = int(prompt_number_of_comment())
+
+    comments = get_recent_comments(jira_client, issue_key, num)
+
+    if comments:
+        display_comments_helper(console, issue_key, comments)
+
+def get_recent_comments(jira_client, issue_key, max_results=5):
+    """Retrieves recent comments from a Jira issue.
+
+    Args:
+        jira_client: A Jira client instance.
+        issue_key: The key of the Jira issue (e.g., "PROJECT-123").
+        max_results: The maximum number of comments to retrieve.
+
+    Returns:
+        A list of comment objects, or None if there's an error.
+    """
+    try:
+        issue = jira_client.issue(issue_key)
+        comments = issue.fields.comment.comments
+
+        # Sort comments by creation date (newest first)
+        comments.sort(key=lambda c: c.created, reverse=True)
+
+        return comments[:max_results] # Return the most recent comments
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
+        return None
 
 # Transition
 def get_transitions(jira_client, issue_key):
@@ -276,6 +311,15 @@ def display_table(console, issues):
     table.add_column("Summary", style="green")
     for issue in issues:
         table.add_row(issue.key, issue.fields.status.name, issue.fields.summary)
+    console.print(table)
+
+def display_comments_helper(console, issue_key, comments):
+    table = Table(title=f"Comments for {issue_key}")
+    table.add_column("Author", style="cyan")
+    table.add_column("Date", style="magenta")
+    table.add_column("Body", style="blue")
+    for comment in comments:
+        table.add_row(comment.author.displayName, comment.created, comment.body)
     console.print(table)
 
 
@@ -453,7 +497,8 @@ def prompt_priority(priorities):
 def prompt_story_points():
     return inquirer.text(
         message="> Enter the story points (numeric value):",
-        validate=lambda result: result.isdigit() or "Story points must be a number",
+        validate=lambda result: result.isdigit(),
+        invalid_message="Story points must be a number",
     ).execute()
 
 
@@ -523,6 +568,13 @@ def prompt_issue_type():
         message="> Select the issue type:",
         choices=["Story", "Sub-task"],
         default="Story",
+    ).execute()
+
+def prompt_number_of_comment():
+    return inquirer.text(
+        message="> Enter number of comments to be revealed:",
+        validate=lambda result: (result.strip().isdigit() and int(result) > 0),
+        invalid_message="Must be a positive number",
     ).execute()
 
 def get_account_id(account_id):
@@ -718,6 +770,8 @@ if __name__ == "__main__":
                         comment,
                         jira_date,
                     )
+        elif get_action_description(action) == "get_comment":
+            display_recent_comments(console, jira_client)
         elif get_action_description(action) == "log_work":
             # Key and comment
             key = prompt_key()
