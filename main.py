@@ -207,8 +207,6 @@ def search_for_issues(jira_client, project_key, user_filter):
     # Concatenate the original filter and customized one
     filter = filter + custom
 
-    print(filter)
-
     issues = jira_client.search_issues(
         filter,
         maxResults=50,
@@ -246,14 +244,14 @@ def display_issue_status(jira_client, issue_key):
         print(f"Failed to fetch status for issue {issue_key}: {e}")
 
 
-def display_recent_comments(console, jira_client):
-    issue_key = prompt_key()
-    num = int(prompt_number_of_comment())
+def display_recent_comments(console, jira_client, issue_key, num):
 
     comments = get_recent_comments(jira_client, issue_key, num)
 
     if comments:
         display_comments_helper(console, issue_key, comments)
+    else:
+        print(f"There is {Fore.YELLOW}no comment to be displayed{Style.RESET_ALL}")
 
 
 def get_recent_comments(jira_client, issue_key, max_results=5):
@@ -468,13 +466,14 @@ def get_time_tracking_info(jira_client, issue_key):
             )
 
             timeSpent = (
-                timetracking['timeSpentSeconds']
-                if 'timeSpentSeconds' in timetracking
-                else 0)
+                timetracking["timeSpentSeconds"]
+                if "timeSpentSeconds" in timetracking
+                else 0
+            )
 
             original = (
-                timetracking['originalEstimateSeconds']
-                if 'originalEstimateSeconds' in timetracking
+                timetracking["originalEstimateSeconds"]
+                if "originalEstimateSeconds" in timetracking
                 else remaining + timeSpent
             )
             return {
@@ -541,11 +540,15 @@ def display_time_bar(time_info):
     print(f"Total:      {format_seconds(total)}")
 
 
-def prompt_key():
-    return inquirer.text(
-        message="Enter the issue key (ex. SPF-101):",
+def prompt_key(project_key):
+    user_prompt = inquirer.text(
+        message="Enter the issue key (ex. SPF-101 or 101):",
         validate=EmptyInputValidator(),
     ).execute()
+    if user_prompt.isdigit():
+        return project_key + "-" + user_prompt
+    else:
+        return user_prompt
 
 
 def prompt_comment():
@@ -643,7 +646,7 @@ def prompt_labels(origin_labels, type_labels, project_labels):
 def prompt_assignee(assignees):
     return inquirer.select(
         message="> Select the assignee:",
-        choices=assignees.split(","),
+        choices=assignees,
     ).execute()
 
 
@@ -752,7 +755,8 @@ def get_user_input(jira_type, labels_conf, default_watchers, assignees, prioriti
         print(f"\nWatchers:: {watchers}\n")
 
     # Assignee selection
-    assignee = prompt_assignee(assignees)
+    assignee_list = [a.strip() for a in assignees.split(",")]
+    assignee = prompt_assignee(assignee_list)
 
     # Due date
     due_date = prompt_due_date()
@@ -803,6 +807,7 @@ if __name__ == "__main__":
         print("No secrets found. A new secret file has been created.")
         exit()
 
+    project_key = secrets["project_key"]
     # Use the secrets to access the JIRA API
     jira_client = connect_to_jira(
         server_url=secrets["server_url"],
@@ -818,6 +823,7 @@ if __name__ == "__main__":
         exit()
     while True:
         # Prompt the user for the action they want to perform
+        print("\n------------------------")
         action = inquirer.select(
             message="What do you want to do?",
             choices=get_action_list(),
@@ -842,9 +848,7 @@ if __name__ == "__main__":
                 display_table(console, issues)
         elif get_action_description(action) == "search_issue":
             # Prompt the user for the issue key
-            key = inquirer.text(
-                message="Type issue key:", validate=EmptyInputValidator()
-            ).execute()
+            key = prompt_key(project_key)
 
             filter = f"key = {key}"
 
@@ -853,10 +857,10 @@ if __name__ == "__main__":
                 display_table(console, issues)
         elif get_action_description(action) == "transition":
             # Prompt the user for the issue key to be transitioned
-            key = prompt_key()
+            key = prompt_key(project_key)
             transition_in_loop(jira_client, key)
         elif get_action_description(action) == "comment":
-            key = prompt_key()
+            key = prompt_key(project_key)
             comment = prompt_comment()
             is_okay = add_comment_to_issue(jira_client, key, comment)
 
@@ -882,10 +886,12 @@ if __name__ == "__main__":
                         jira_date,
                     )
         elif get_action_description(action) == "get_comment":
-            display_recent_comments(console, jira_client)
+            issue_key = prompt_key(project_key)
+            num = int(prompt_number_of_comment())
+            display_recent_comments(console, jira_client, issue_key, num)
         elif get_action_description(action) == "log_work":
             # Key and comment
-            key = prompt_key()
+            key = prompt_key(project_key)
             comment = prompt_comment()
 
             # Time spent
@@ -975,7 +981,7 @@ if __name__ == "__main__":
                         print(f"\nSubtask created successfully: {url}{subtask.key}\n")
                         transition_in_loop(jira_client, subtask.key)
         elif get_action_description(action) == "get_time":
-            issue_key = prompt_key()
+            issue_key = prompt_key(project_key)
             time_info = get_time_tracking_info(jira_client, issue_key)
             display_time_bar(time_info)
         else:
