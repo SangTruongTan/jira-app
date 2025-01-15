@@ -589,16 +589,37 @@ def get_child_tasks(jira_instance, parent_issue_key):
         print(f"An error occurred: {e}")
         return None
 
+def format_working_time(seconds):
+    """
+    Formats seconds into a human-readable string based on business working days and weeks.
+    - 1 business day = 8 hours (28800 seconds)
+    - 1 workweek = 5 business days (144000 seconds)
 
-def format_seconds(seconds):
-    """Formats seconds into a human-readable string (e.g., "1h 30m")."""
-    if seconds is None:
-        return "0s"
-    minutes, seconds = divmod(seconds, 60)
-    hours, minutes = divmod(minutes, 60)
-    days, hours = divmod(hours, 24)
+    Args:
+        seconds (int): Number of seconds to convert.
 
+    Returns:
+        str: A human-readable string in terms of weeks, days, hours, and minutes.
+    """
+    if seconds is None or seconds <= 0:
+        return "0m"
+
+    # Constants for business working time
+    SECONDS_IN_MINUTE = 60
+    SECONDS_IN_HOUR = 60 * SECONDS_IN_MINUTE
+    SECONDS_IN_WORKDAY = 8 * SECONDS_IN_HOUR
+    SECONDS_IN_WORKWEEK = 5 * SECONDS_IN_WORKDAY
+
+    # Calculate business time components
+    weeks, remaining_seconds = divmod(seconds, SECONDS_IN_WORKWEEK)
+    days, remaining_seconds = divmod(remaining_seconds, SECONDS_IN_WORKDAY)
+    hours, remaining_seconds = divmod(remaining_seconds, SECONDS_IN_HOUR)
+    minutes, _ = divmod(remaining_seconds, SECONDS_IN_MINUTE)
+
+    # Build the output string
     parts = []
+    if weeks:
+        parts.append(f"{weeks}w")
     if days:
         parts.append(f"{days}d")
     if hours:
@@ -607,8 +628,8 @@ def format_seconds(seconds):
         parts.append(f"{minutes}m")
     if not parts:
         parts.append("0m")
-    return " ".join(parts)
 
+    return " ".join(parts)
 
 def display_time_bar(time_info):
     """Displays the time tracking information as a text-based bar."""
@@ -623,17 +644,19 @@ def display_time_bar(time_info):
         print("No original estimate set.")
         return
 
+    TIME_WIDTH = 12 # Adjust this to fti the longest possible time string
+
     spent_percent = int((spent / total) * 20)  # Adjust bar length (20 characters here)
     remaining_percent = int((remaining / total) * 20)
 
     spent_bar = "[" + "=" * spent_percent + " " * (20 - spent_percent) + "]"
     remaining_bar = "[" + " " * remaining_percent + "-" * (20 - remaining_percent) + "]"
 
-    print(f"Time Spent: {format_seconds(spent)} {spent_bar} {int(spent/total*100)}%")
+    print(f"Time Spent: {format_working_time(spent).ljust(TIME_WIDTH)} {spent_bar} {int(spent/total*100)}%")
     print(
-        f"Remaining:  {format_seconds(remaining)} {remaining_bar} {int(remaining/total*100)}%"
+        f"Remaining:  {format_working_time(remaining).ljust(TIME_WIDTH)} {remaining_bar} {int(remaining/total*100)}%"
     )
-    print(f"Total:      {format_seconds(total)}")
+    print(f"Total:      {format_working_time(total).ljust(TIME_WIDTH)}")
 
 
 def prompt_key(project_key):
