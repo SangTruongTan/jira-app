@@ -766,16 +766,21 @@ def prompt_due_date():
         return due_date
 
 
-def prompt_parent(console, project_key, list_parent):
+def prompt_parent(console, project_key, issue_type="Sub-task"):
     use_list_parent = inquirer.confirm(
-        message="Do you want to fetch epic links?",
+        message="Would you like to use predefined parent issue?",
         default=True,
-    ).execute() if list_parent else False
+    ).execute() if issue_type != "Sub-task" else None
 
-    if use_list_parent:
+    list_parent = (
+        get_epic_list(jira_client, project_key)
+        if use_list_parent
+        else None
+    )
+    if list_parent:
         display_table(console, list_parent)
         user_prompt = inquirer.select(
-            message="Enter the parent issue key:",
+            message="Select the parent issue key:",
             choices=[issue.key for issue in list_parent],
         ).execute()
         return user_prompt
@@ -848,7 +853,6 @@ def get_user_input(
     assignees,
     priorities,
     project_key,
-    list_parent,
     console,
 ):
     # Get input for required fields
@@ -863,7 +867,7 @@ def get_user_input(
     priority = prompt_priority(priorities_list)
 
     # Get the parent task
-    parent_issue_key = prompt_parent(console, project_key, list_parent)
+    parent_issue_key = prompt_parent(console, project_key, issue_type)
 
     # Additional fields
     labels = []
@@ -940,12 +944,17 @@ def get_subtask_input(assignees):
     }
 
 
-def get_epic_list(jira_client, project_key, jira_type):
-    if jira_type == "server":
+def get_epic_list(jira_client, project_key, jira_type="server"):
+    if jira_type != "server":
+        return None
+    if not hasattr(get_epic_list, "memory"):
+        get_epic_list.memory = []
         filter = "issuetype = Epic AND Resolution = Unresolved"
-        issues = search_for_issues(jira_client, project_key, filter)
-        epics = [issue for issue in issues if issue.fields.issuetype.name == "Epic"]
+        epics = search_for_issues(jira_client, project_key, filter)
+        get_epic_list.memory = epics
         return epics
+    else:
+        return get_epic_list.memory
 
 # Main entry point
 if __name__ == "__main__":
@@ -974,19 +983,6 @@ if __name__ == "__main__":
     else:
         print("Failed to connect to Jira. Please check your secrets and try again.")
         exit()
-
-    # Get parent list here
-    # Todo: To be supported on Cloud Platform
-    use_list_parent = inquirer.confirm(
-        message="Would you like to use predefined parent issue?",
-        default=True,
-    ).execute()
-
-    list_parent = (
-        get_epic_list(jira_client, project_key, secrets["jira_type"])
-        if secrets["jira_type"] == "server" and use_list_parent
-        else None
-    )
 
     while True:
         # Prompt the user for the action they want to perform
@@ -1082,7 +1078,6 @@ if __name__ == "__main__":
                 secrets["assignees"],
                 secrets["priorities"],
                 project_key,
-                list_parent=list_parent,
                 console=console,
             )
 
