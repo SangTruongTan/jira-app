@@ -866,7 +866,7 @@ def get_user_input(
         "parent": {"key": parent_issue_key} if parent_issue_key else None,
         "priority": {"name": priority},
         "labels": labels,
-        "story_points": int(story_points),
+        "story_points": float(story_points),
         "estimated_time": estimated_time,
         "watchers": watchers_field,
         "assignee": assignee,
