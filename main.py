@@ -25,7 +25,8 @@ ACTION_DICT = {
     "log_work": "7. Log time spent on an issue",
     "get_time": "8. Get time tracking on an issue",
     "update_labels": "9. Update labels",
-    "exit": "10. Exit the application",
+    "get_childs": "10. Retrieve child tasks from an Epic or Task",
+    "exit": "11. Exit the application",
 }
 
 
@@ -314,8 +315,13 @@ def fetch_and_display_transitions(jira_client, issue_key):
 
 
 # Display issues as table
-def display_table(console, issues):
-    table = Table(title="Issue details")
+def display_table(console, issues, parent_issue=None):
+    if parent_issue:
+        title = f"Child issues of {parent_issue}"
+    else:
+        title = "Issue details"
+
+    table = Table(title=title)
     table.add_column("Key", style="cyan")
     table.add_column("Type", style="blue")
     table.add_column("Status", style="magenta")
@@ -541,6 +547,42 @@ def get_time_tracking_info(jira_client, issue_key):
         print(
             f"AttributeError: Time tracking might not be enabled for this issue or project."
         )
+        return None
+
+def get_child_tasks(jira_instance, parent_issue_key):
+    """
+    Retrieve child tasks (subtasks or linked issues) for a Jira Epic or Story.
+
+    Args:
+        jira_instance (JIRA): An authenticated JIRA instance.
+        parent_issue_key (str): The key of the Epic or Story (e.g., "PROJECT-123").
+
+    Returns:
+        list: A list of child tasks with their keys, summaries, and statuses.
+    """
+    try:
+        # Fetch the parent issue
+        parent_issue = jira_instance.issue(parent_issue_key)
+
+        child_tasks = []
+
+        # Retrieve subtasks if they exist
+        if parent_issue.fields.subtasks:
+            child_tasks = [subtask for subtask in parent_issue.fields.subtasks]
+
+        # Retrieve issues under and Epic (e.g., issues in an Epic)
+        if child_tasks == []:
+            filter = f"\"Epic Link\" = {issue_key}"
+            issues = jira_client.search_issues(
+                jql_str=filter,
+                maxResults=50
+            )
+            child_tasks = [issue for issue in issues]
+
+        return child_tasks
+
+    except Exception as e:
+        print(f"An error occurred: {e}")
         return None
 
 
@@ -1137,5 +1179,10 @@ if __name__ == "__main__":
             issue_key = prompt_key(project_key)
             if update_jira_labels(jira_client, issue_key, [label]):
                 print(f"Labels updated successfully for issue {url}{issue_key}")
+        elif get_action_description(action) == "get_childs":
+            issue_key = prompt_key(project_key)
+            child_tasks = get_child_tasks(jira_client, issue_key)
+            if child_tasks:
+                display_table(console, child_tasks)
         else:
             exit()
