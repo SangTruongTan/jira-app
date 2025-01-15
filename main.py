@@ -200,8 +200,12 @@ def create_sub_task(jira, parent_issue_key, summary, description, **fields):
 
 
 # Search for current assigned issues
-def search_for_issues(jira_client, project_key, user_filter):
-    filter = f"project={project_key} AND assignee=currentUser() "
+def search_for_issues(jira_client, project_key, user_filter, assignee=None):
+    if assignee:
+        user = assignee
+    else:
+        user = "currentUser()"
+    filter = f"project={project_key} AND assignee={user} "
     custom = "AND "
     if user_filter == "Open":
         custom += " resolution = Unresolved"
@@ -1006,7 +1010,10 @@ if __name__ == "__main__":
                 default="Active",
             ).execute()
 
-            issues = search_for_issues(jira_client, secrets["project_key"], filter)
+            assignee_list = [a.strip() for a in secrets["assignees"].split(",")]
+            assignee = prompt_assignee(assignee_list)
+
+            issues = search_for_issues(jira_client, secrets["project_key"], filter, assignee)
             if issues:
                 display_table(console, issues)
         elif get_action_description(action) == "search_issue":
