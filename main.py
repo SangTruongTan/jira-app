@@ -1159,7 +1159,7 @@ if __name__ == "__main__":
 
                 create_subtask = inquirer.confirm(
                     message="Do you want to create a subtask for this task?",
-                ).execute()
+                ).execute() if task_details["issue_type"] != "Sub-task" else False
                 if create_subtask:
                     # Custom fields
                     custom_fields = None
