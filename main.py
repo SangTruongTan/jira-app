@@ -452,7 +452,12 @@ def log_work_with_date(
     except Exception as e:
         print(f"Failed to log work: {e}")
 
-def update_jira_labels(jira_client, issue_key, labels_to_add=None, ):
+
+def update_jira_labels(
+    jira_client,
+    issue_key,
+    labels_to_add=None,
+):
     """Updates the labels of a Jira issue.
 
     Args:
@@ -466,7 +471,9 @@ def update_jira_labels(jira_client, issue_key, labels_to_add=None, ):
     """
     try:
         issue = jira_client.issue(issue_key)
-        current_labels = issue.fields.labels or []  # Handle cases where there are no existing labels
+        current_labels = (
+            issue.fields.labels or []
+        )  # Handle cases where there are no existing labels
 
         updates = []
 
@@ -484,11 +491,12 @@ def update_jira_labels(jira_client, issue_key, labels_to_add=None, ):
             return True
         else:
             print(f"No labels to add or remove for issue {issue_key}")
-            return True # Return true because there was no error.
+            return True  # Return true because there was no error.
 
     except Exception as e:
         print(f"An unexpected error occurred: {e}")
         return False
+
 
 # Helper
 def get_action_list():
@@ -553,6 +561,7 @@ def get_time_tracking_info(jira_client, issue_key):
         )
         return None
 
+
 def get_child_tasks(jira_instance, parent_issue_key):
     """
     Retrieve child tasks (subtasks or linked issues) for a Jira Epic or Story.
@@ -576,11 +585,8 @@ def get_child_tasks(jira_instance, parent_issue_key):
 
         # Retrieve issues under and Epic (e.g., issues in an Epic)
         if child_tasks == []:
-            filter = f"\"Epic Link\" = {issue_key}"
-            issues = jira_client.search_issues(
-                jql_str=filter,
-                maxResults=50
-            )
+            filter = f'"Epic Link" = {issue_key}'
+            issues = jira_client.search_issues(jql_str=filter, maxResults=50)
             child_tasks = [issue for issue in issues]
 
         return child_tasks
@@ -588,6 +594,7 @@ def get_child_tasks(jira_instance, parent_issue_key):
     except Exception as e:
         print(f"An error occurred: {e}")
         return None
+
 
 def format_working_time(seconds):
     """
@@ -631,6 +638,7 @@ def format_working_time(seconds):
 
     return " ".join(parts)
 
+
 def display_time_bar(time_info):
     """Displays the time tracking information as a text-based bar."""
     if not time_info:
@@ -644,7 +652,7 @@ def display_time_bar(time_info):
         print("No original estimate set.")
         return
 
-    TIME_WIDTH = 12 # Adjust this to fti the longest possible time string
+    TIME_WIDTH = 12  # Adjust this to fti the longest possible time string
 
     spent_percent = int((spent / total) * 20)  # Adjust bar length (20 characters here)
     remaining_percent = int((remaining / total) * 20)
@@ -652,7 +660,9 @@ def display_time_bar(time_info):
     spent_bar = "[" + "=" * spent_percent + " " * (20 - spent_percent) + "]"
     remaining_bar = "[" + " " * remaining_percent + "-" * (20 - remaining_percent) + "]"
 
-    print(f"Time Spent: {format_working_time(spent).ljust(TIME_WIDTH)} {spent_bar} {int(spent/total*100)}%")
+    print(
+        f"Time Spent: {format_working_time(spent).ljust(TIME_WIDTH)} {spent_bar} {int(spent/total*100)}%"
+    )
     print(
         f"Remaining:  {format_working_time(remaining).ljust(TIME_WIDTH)} {remaining_bar} {int(remaining/total*100)}%"
     )
@@ -790,16 +800,16 @@ def prompt_due_date():
 
 
 def prompt_parent(console, project_key, issue_type="Sub-task"):
-    use_list_parent = inquirer.confirm(
-        message="Would you like to use predefined parent issue?",
-        default=True,
-    ).execute() if issue_type != "Sub-task" else None
-
-    list_parent = (
-        get_epic_list(jira_client, project_key)
-        if use_list_parent
+    use_list_parent = (
+        inquirer.confirm(
+            message="Would you like to use predefined parent issue?",
+            default=True,
+        ).execute()
+        if issue_type != "Sub-task"
         else None
     )
+
+    list_parent = get_epic_list(jira_client, project_key) if use_list_parent else None
     if list_parent:
         display_table(console, list_parent)
         user_prompt = inquirer.select(
@@ -815,7 +825,6 @@ def prompt_parent(console, project_key, issue_type="Sub-task"):
             return project_key + "-" + user_prompt
         else:
             return user_prompt
-
 
 
 def prompt_issue_type():
@@ -834,17 +843,18 @@ def prompt_number_of_comment():
         default="3",
     ).execute()
 
+
 def prompt_update_labels(labels):
     if labels != [""]:
         return inquirer.select(
-                message="Select labels to be updated:",
-                choices=labels,
-            ).execute()
+            message="Select labels to be updated:",
+            choices=labels,
+        ).execute()
     else:
         return inquirer.text(
-            message="Type your label here:",
-            validate=EmptyInputValidator()
+            message="Type your label here:", validate=EmptyInputValidator()
         ).execute()
+
 
 def get_account(jira_client, jira_type, assignee):
     account = (
@@ -905,7 +915,11 @@ def get_user_input(
     print(f"\nSelected labels: {labels if labels else 'None'}\n")
 
     # Additional: Story points
-    story_points = prompt_story_points() if jira_type == "server" and issue_type != "Sub-task" else 0
+    story_points = (
+        prompt_story_points()
+        if jira_type == "server" and issue_type != "Sub-task"
+        else 0
+    )
 
     # Estimated time
     estimated_time = prompt_estimated_time()
@@ -979,6 +993,7 @@ def get_epic_list(jira_client, project_key, jira_type="server"):
     else:
         return get_epic_list.memory
 
+
 # Main entry point
 if __name__ == "__main__":
     # Initialization
@@ -1032,7 +1047,9 @@ if __name__ == "__main__":
             assignee_list = [a.strip() for a in secrets["assignees"].split(",")]
             assignee = prompt_assignee(assignee_list)
 
-            issues = search_for_issues(jira_client, secrets["project_key"], filter, assignee)
+            issues = search_for_issues(
+                jira_client, secrets["project_key"], filter, assignee
+            )
             if issues:
                 display_table(console, issues)
         elif get_action_description(action) == "search_issue":
@@ -1157,9 +1174,13 @@ if __name__ == "__main__":
 
                 transition_in_loop(jira_client, task.key)
 
-                create_subtask = inquirer.confirm(
-                    message="Do you want to create a subtask for this task?",
-                ).execute() if task_details["issue_type"] != "Sub-task" else False
+                create_subtask = (
+                    inquirer.confirm(
+                        message="Do you want to create a subtask for this task?",
+                    ).execute()
+                    if task_details["issue_type"] != "Sub-task"
+                    else False
+                )
                 if create_subtask:
                     # Custom fields
                     custom_fields = None
